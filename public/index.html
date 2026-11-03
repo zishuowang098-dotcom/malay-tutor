@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>马来语私教</title>
+<meta name="description" content="上传老师的课件，AI 用中文讲解、用马来语示范，语音互动一步步教你。">
+<meta name="theme-color" content="#0f766e">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="马来语私教">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <a href="#/" class="brand"><img src="/icons/icon.svg" alt="" width="28" height="28"><span>马来语私教</span></a>
+  <button class="icon-btn" id="btn-settings" aria-label="设置" title="设置">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+  </button>
+</header>
+<main id="app" class="container"><p class="muted center">加载中…</p></main>
+<div id="toast" role="status" aria-live="polite"></div>
+<dialog id="settings-dlg">
+  <form method="dialog" class="stack">
+    <h2>设置</h2>
+    <label>马来语发音人
+      <select name="msVoice"><option value="ms-female">Yasmin（女声，ms-MY）</option><option value="ms-male">Osman（男声，ms-MY）</option></select>
+    </label>
+    <label>中文讲解声音
+      <select name="zhVoice"><option value="zh-female">晓晓（女声）</option><option value="zh-male">云希（男声）</option></select>
+    </label>
+    <label class="check"><input type="checkbox" name="autoMic"> 老师说完后自动开始录音</label>
+    <label class="check"><input type="checkbox" name="autoStop"> 说完停顿约 1.5 秒自动结束录音</label>
+    <div class="row end"><button class="btn primary" value="ok">完成</button></div>
+  </form>
+</dialog>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
