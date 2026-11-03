@@ -170,7 +170,7 @@ app.get('/api/tts', wrap(async (req, res) => {
   res.set({ 'Content-Type': 'audio/mpeg', 'Cache-Control': 'private, max-age=31536000' }).send(buf);
 }));
 app.post('/api/stt', express.raw({ type: ['audio/wav', 'audio/*', 'application/octet-stream'], limit: '8mb' }), wrap(async (req, res) => {
-  const r = await recognize({ audio: req.body, language: req.query.lang, referenceText: req.query.ref });
+  const r = await recognize({ audio: req.body, language: req.query.lang, referenceText: req.query.ref, selfAssess: req.query.assess === 'self' });
   if (r.ok && req.query.ref && !r.assessment) r.textMatch = compareText(req.query.ref, r.text);
   res.json(r);
 }));
@@ -265,6 +265,74 @@ app.post('/api/courses/:id/grade', wrap(async (req, res) => {
     const ms = kind === 'listening' ? question.audio_ms : question.expected_ms;
     const zh = kind === 'listening' ? question.translation_zh : question.prompt_zh.replace(/^.*?[:：]\s*/, '');
     recordItem(p, { ms: question.item_ms || ms, zh: question.item_zh || zh, page: question.page, correct: kind === 'listening' ? result.understood && result.correct : result.correct, mode: mode || kind, score: result.score, error: result.errors.map((e) => `${e.wrong}→${e.right}：${e.explanation_zh}`).join('；'), transcript });
+  });
+  res.json(result);
+}));
+
+// ---------- Quiz 备考 ----------
+const quizText = (q) => q.pages.map((p) => `[第 ${p.page} 页]\n${p.text.join('\n')}`).join('\n\n');
+async function analyzeQuizBg(courseId, qid) {
+  try {
+    const course = await store.getCourse(courseId);
+    const quiz = course?.quizzes?.find((q) => q.id === qid);
+    if (!quiz) return;
+    const analysis = await ai.analyzeQuiz({ course, quizText: quizText(quiz) });
+    await store.updateCourse(courseId, (c) => { const q = c.quizzes.find((x) => x.id === qid); if (q) { q.analysis = analysis; q.status = 'ready'; q.error = null; } });
+  } catch (e) {
+    console.error('quiz analyze failed', e.message);
+    await store.updateCourse(courseId, (c) => { const q = c.quizzes?.find((x) => x.id === qid); if (q) { q.status = 'error'; q.error = e.message; } });
+  }
+}
+const mustQuiz = (c, qid) => {
+  const q = c.quizzes?.find((x) => x.id === qid);
+  if (!q) throw Object.assign(new Error('Quiz 不存在'), { status: 404 });
+  if (!q.analysis) throw Object.assign(new Error('Quiz 还在分析中'), { status: 409 });
+  return q;
+};
+app.post('/api/courses/:id/quizzes', upload.single('file'), wrap(async (req, res) => {
+  await mustCourse(req.params.id);
+  if (!req.file) throw Object.assign(new Error('请选择 quiz 文件'), { status: 400 });
+  const fileName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+  const parsed = await parseFile(req.file.buffer, fileName);
+  const pages = parsed.slides.map((s) => ({ page: s.page, text: [...s.text, ...(s.notes || [])] }));
+  if (!pages.some((p) => p.text.length)) throw Object.assign(new Error('这个文件里提取不到文字（可能是扫描图片），暂时无法分析'), { status: 400 });
+  const quiz = { id: store.newId(), fileName, pages, status: 'analyzing', analysis: null, studies: {}, createdAt: Date.now() };
+  await store.updateCourse(req.params.id, (c) => { c.quizzes = [...(c.quizzes || []), quiz]; });
+  res.json(quiz);
+  analyzeQuizBg(req.params.id, quiz.id);
+}));
+app.post('/api/courses/:id/quizzes/:qid/reanalyze', wrap(async (req, res) => {
+  const c = await store.updateCourse(req.params.id, (c) => { const q = c.quizzes?.find((x) => x.id === req.params.qid); if (q) { q.status = 'analyzing'; q.error = null; q.studies = {}; } });
+  if (!c) throw Object.assign(new Error('课程不存在'), { status: 404 });
+  res.json({ ok: true });
+  analyzeQuizBg(req.params.id, req.params.qid);
+}));
+app.delete('/api/courses/:id/quizzes/:qid', wrap(async (req, res) => {
+  await store.updateCourse(req.params.id, (c) => { c.quizzes = (c.quizzes || []).filter((q) => q.id !== req.params.qid); });
+  res.json({ ok: true });
+}));
+app.post('/api/courses/:id/quizzes/:qid/study', wrap(async (req, res) => {
+  const course = await mustCourse(req.params.id);
+  const quiz = mustQuiz(course, req.params.qid);
+  const topic = quiz.analysis.topics.find((t) => t.id === req.body.topicId) || quiz.analysis.topics[0];
+  if (!topic) throw Object.assign(new Error('这个 quiz 没有可用的话题'), { status: 400 });
+  if (quiz.studies?.[topic.id] && !req.body.regenerate) return res.json({ topic, study: quiz.studies[topic.id] });
+  const study = await ai.quizStudy({ course, quiz, topic });
+  await store.updateCourse(course.id, (c) => { const q = c.quizzes.find((x) => x.id === quiz.id); q.studies = { ...(q.studies || {}), [topic.id]: study }; });
+  res.json({ topic, study });
+}));
+app.post('/api/courses/:id/quizzes/:qid/mock', wrap(async (req, res) => {
+  const course = await mustCourse(req.params.id);
+  const quiz = mustQuiz(course, req.params.qid);
+  const topic = quiz.analysis.topics.find((t) => t.id === req.body.topicId);
+  const transcript = String(req.body.transcript || '').trim().slice(0, 3000);
+  if (!topic || !transcript) throw Object.assign(new Error('缺少话题或回答'), { status: 400 });
+  const result = await ai.gradeMock({ course, quiz, topic, transcript, assessment: req.body.assessment || null });
+  await store.updateProgress(course.id, (p) => {
+    p.mocks = [...(p.mocks || []), { at: Date.now(), quizId: quiz.id, topicId: topic.id, topic: topic.name_zh, score: result.score, max: result.max_score, transcript }].slice(-100);
+    for (const s of result.sentences) {
+      if (!s.ok && s.corrected_ms) recordItem(p, { ms: s.corrected_ms, zh: `${topic.name_zh}：${s.point_zh}`, page: null, correct: false, mode: 'mock', error: s.issue_zh, transcript: s.heard });
+    }
   });
   res.json(result);
 }));

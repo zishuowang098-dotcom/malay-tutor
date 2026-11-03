@@ -57,7 +57,12 @@ button, .btn { font: inherit; }
 .pill { display: inline-flex; align-items: center; padding: 0 9px; border-radius: 99px; font-size: .78rem; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
 .pill.good { background: var(--good-bg); color: var(--good); } .pill.warn { background: var(--warn-bg); color: var(--warn); } .pill.bad { background: var(--bad-bg); color: var(--bad); }
 .src { display: inline-block; font-size: .7rem; font-weight: 600; padding: 0 6px; border-radius: 6px; margin-left: 4px; vertical-align: 2px; white-space: nowrap; }
-.src.slide { background: var(--accent-soft); color: var(--accent); } .src.supplement { background: var(--supp-bg); color: var(--supp); }
+.src.slide { background: var(--accent-soft); color: var(--accent); } .src.supplement { background: var(--supp-bg); color: var(--supp); } .src.quiz { background: var(--warn-bg); color: var(--warn); }
+.level { display: inline-block; min-width: 3em; text-align: center; padding: 0 8px; border-radius: 8px; font-size: .8rem; font-weight: 600; }
+.level.excellent { background: var(--good-bg); color: var(--good); } .level.good { background: var(--warn-bg); color: var(--warn); } .level.weak { background: var(--bad-bg); color: var(--bad); } .level.not_assessed { background: var(--surface-2); color: var(--muted); }
+textarea { width: 100%; min-height: 120px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; resize: vertical; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; } .chips span { padding: 1px 9px; border-radius: 8px; background: var(--surface-2); font-size: .88rem; } .chips span.must { background: var(--bad-bg); color: var(--bad); } .chips span.ok { background: var(--good-bg); color: var(--good); } .chips span.miss { background: var(--bad-bg); color: var(--bad); }
+.topicname { font-size: 1.5rem; font-weight: 700; color: var(--ms); }
 .tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; padding-block: 2px; }
 .tabs::-webkit-scrollbar { display: none; }
 .tab { flex: none; border: 1px solid transparent; background: transparent; color: var(--muted); border-radius: 99px; padding: 6px 14px; cursor: pointer; font-size: .95rem; }
@@ -124,7 +129,7 @@ let toastT;
 function toast(m, ms = 4000) { const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => (t.hidden = true), ms); }
 const rid = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => b.toString(16).padStart(2, '0')).join('');
 const scoreCls = (s) => (s >= 80 ? 'good' : s >= 60 ? 'mid' : 'bad');
-const srcTag = (s) => (s === 'supplement' ? '<span class="src supplement" title="课件之外由 AI 补充">AI补充</span>' : s === 'slide' ? '<span class="src slide" title="课件原文">课件</span>' : '');
+const srcTag = (s) => (s === 'supplement' ? '<span class="src supplement" title="课件之外由 AI 补充">AI补充</span>' : s === 'slide' ? '<span class="src slide" title="课件原文">课件</span>' : s === 'quiz' ? '<span class="src quiz" title="来自 quiz 文件">Quiz</span>' : '');
 const sayBtns = (t) => `<span class="say"><button data-say="${esc(t)}" title="播放">▶︎</button><button data-say="${esc(t)}" data-slow="1" title="慢速">慢</button></span>`;
 const normKey = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}\s-]/gu, ' ').replace(/\s+/g, ' ').trim();
 const pref = { get(k, d) { try { const v = localStorage.getItem('mtl_' + k); return v == null ? d : JSON.parse(v); } catch { return d; } }, set(k, v) { try { localStorage.setItem('mtl_' + k, JSON.stringify(v)); } catch {} } };
@@ -351,7 +356,7 @@ function compareText(ref, hyp) {
 
 // ================= 页面状态 =================
 const S = { course: null, notes: {}, tab: 'learn', page: null, gen: false };
-const TABS = [['learn', '上课'], ['notes', '讲义'], ['practice', '跟读'], ['speak', '口语测试'], ['listen', '听力测试'], ['review', '复习']];
+const TABS = [['learn', '上课'], ['notes', '讲义'], ['quiz', 'Quiz 备考'], ['practice', '跟读'], ['speak', '口语测试'], ['listen', '听力测试'], ['review', '复习']];
 $('#home-btn').onclick = () => { Speech.stop(); S.course = null; pref.set('last', null); renderHome(); };
 
 // ================= 首页 =================
@@ -474,13 +479,13 @@ function renderCourse() {
     $('#del-no').onclick = () => ($('#confirm').innerHTML = '');
     $('#del-yes').onclick = async () => {
       for (const s of c.slides) { await Store.del(`n_${c.id}_${s.page}`); await Store.del(`t_${c.id}_${s.page}`); }
-      await Store.del('p_' + c.id); await Store.del('c_' + c.id);
+      await Store.del('p_' + c.id); await Store.del('q_' + c.id); await Store.del('c_' + c.id);
       S.course = null; pref.set('last', null); renderHome();
     };
   };
   if ($('#gen-go')) $('#gen-go').onclick = () => generateNotes();
   const v = $('#view');
-  ({ learn: viewLearn, notes: viewNotes, practice: viewPractice, speak: (x) => quizSetup(x, 'speaking'), listen: (x) => quizSetup(x, 'listening'), review: viewReview }[S.tab] || viewLearn)(v);
+  ({ learn: viewLearn, notes: viewNotes, quiz: viewQuiz, practice: viewPractice, speak: (x) => quizSetup(x, 'speaking'), listen: (x) => quizSetup(x, 'listening'), review: viewReview }[S.tab] || viewLearn)(v);
 }
 
 // ---------- 讲义 ----------
@@ -577,7 +582,9 @@ async function viewLearn(v) {
     try {
       const prog = await getProg(c.id);
       const w = weak(prog, 8);
-      const intro = `${TUTOR_RULES}\n\n${pageContext(c, slide, L)}${w.length ? `\n\n【学生的薄弱点（合适时顺带复习）】${w.map((x) => `${x.ms}（${x.zh}）`).join('；')}` : ''}`;
+      const qz = ((await Store.get('q_' + c.id)) || {}).list || [];
+      const qb = qz.filter((q) => q.analysis).map((q) => `《${q.analysis.title}》：${q.analysis.task_zh}；要点：${(q.analysis.required_points || []).map((x) => x.name_zh + (x.compulsory ? '(必选)' : '')).join('、')}`).join('\n');
+      const intro = `${TUTOR_RULES}\n\n${pageContext(c, slide, L)}${qb ? `\n\n【这门课有测验，讲到相关内容时提醒学生“这是考点”】\n${qb}` : ''}${w.length ? `\n\n【学生的薄弱点（合适时顺带复习）】${w.map((x) => `${x.ms}（${x.zh}）`).join('；')}` : ''}`;
       const input = [{ role: 'user', content: intro }, ...turns.slice(-30), { role: 'user', content: userText }];
       const r = clean(await ai(input, { tier: teacherTier() }));
       if (!r.segments.length) throw new Error('老师没有给出内容，请重试');
@@ -768,6 +775,209 @@ async function viewReview(v) {
   };
   if ($('#r-due')) $('#r-due').onclick = () => go(due);
   if ($('#r-weak')) $('#r-weak').onclick = () => go(w);
+}
+
+// ---------- Quiz 备考 ----------
+const FORMAT_ZH = { oral_presentation: '口头陈述', oral_qa: '口头问答', written: '笔试', multiple_choice: '选择题', mixed: '综合', other: '其他' };
+const LEVEL_ZH = { weak: '弱', good: '良', excellent: '优', not_assessed: '未评估' };
+const arr = (x) => (Array.isArray(x) ? x : []);
+function courseDigest(c, pages) {
+  return c.slides.filter((s) => S.notes[s.page]?.is_lesson_content && (!pages || !pages.length || pages.includes(s.page)))
+    .map((s) => { const L = S.notes[s.page]; return `第${s.page}页《${L.title_zh}》 单词：${L.vocabulary.map((v) => `${v.ms}=${v.zh}`).join('；')}；句型：${L.sentence_patterns.map((p) => `${p.pattern_ms}(${p.meaning_zh})`).join('；')}`; }).join('\n');
+}
+async function getQuizzes(cid) { return ((await Store.get('q_' + cid)) || {}).list || []; }
+async function saveQuizzes(cid, list) { await Store.set('q_' + cid, { type: 'quizzes', courseId: cid, list }); }
+function cleanAnalysis(a) {
+  const topics = arr(a?.topics).filter((t) => t && (t.name_ms || t.name_zh)).map((t, i) => ({ id: String(t.id || 't' + i).replace(/[^\w-]/g, '') || 't' + i, name_ms: String(t.name_ms || t.name_zh), name_zh: String(t.name_zh || ''), note_zh: String(t.note_zh || '') }));
+  return {
+    title: String(a?.title || 'Quiz'), format: String(a?.format || 'other'), summary_zh: String(a?.summary_zh || ''), task_zh: String(a?.task_zh || ''),
+    sentence_count: Number(a?.sentence_count) || 0, total_marks: String(a?.total_marks || ''), instructions_zh: arr(a?.instructions_zh).map(String), rules_zh: arr(a?.rules_zh).map(String),
+    topics: topics.length ? topics : [{ id: 'main', name_ms: String(a?.title || 'Quiz'), name_zh: '整个测验', note_zh: '' }],
+    required_points: arr(a?.required_points).filter((p) => p && (p.name_zh || p.name_ms)).map((p) => ({ name_ms: String(p.name_ms || ''), name_zh: String(p.name_zh || p.name_ms), compulsory: !!p.compulsory })),
+    criteria: arr(a?.criteria).filter((k) => k && k.name_zh).map((k) => ({ name_ms: String(k.name_ms || ''), name_zh: String(k.name_zh), weak_zh: String(k.weak_zh || ''), good_zh: String(k.good_zh || ''), excellent_zh: String(k.excellent_zh || '') })),
+    related_pages: arr(a?.related_pages).map(Number).filter(Boolean),
+  };
+}
+const QUIZ_PROMPT = (c, text) => `你是马来西亚标准马来语老师，学生母语是中文。学生上传了老师发的测验（quiz）说明文件。请准确读懂它，提取备考需要的信息，用中文说明。
+- format：口头陈述=oral_presentation，口头问答=oral_qa，笔试写作=written，选择题=multiple_choice，混合=mixed，其他=other。
+- task_zh：一句话说明学生要做什么。sentence_count：要求的句子/答案数量（没有要求填 0）。total_marks：原文分值写法（没有填空字符串）。
+- topics：可选/抽取的话题（id 用简短英文小写，name_ms 用原文）；没有话题就给一个代表整个测验的话题。
+- required_points：要求覆盖的要点，原文标注必选的 compulsory=true。
+- criteria：评分标准，每项给出 弱/良/优 三档中文描述。rules_zh：考试规则。instructions_zh：其他关键说明。
+- related_pages：课程讲义中相关的页码。
+只根据文件内容提取，不要编造。
+课程：《${c.title}》
+【课程讲义摘要】
+${courseDigest(c) || '（暂无讲义）'}
+
+【测验文件原文】
+${text}
+
+只回复一个 JSON 对象：{"title":"...","format":"oral_presentation","summary_zh":"...","task_zh":"...","sentence_count":5,"total_marks":"10M","instructions_zh":["..."],"rules_zh":["..."],"topics":[{"id":"myself","name_ms":"Diri Saya","name_zh":"我自己","note_zh":""}],"required_points":[{"name_ms":"Nama","name_zh":"姓名","compulsory":true}],"criteria":[{"name_ms":"Sebutan","name_zh":"发音","weak_zh":"...","good_zh":"...","excellent_zh":"..."}],"related_pages":[2,3]}`;
+
+function quizUploadHtml(label) {
+  return `<label class="drop" id="qdrop"><input type="file" id="qfile" accept=".pdf,.pptx"><b>${label}</b><div class="muted small">.pdf / .pptx，例如老师发的 quiz 说明、考试要求、评分标准</div></label><div id="qupl"></div>`;
+}
+function bindQuizUpload(v) {
+  const input = $('#qfile'); if (!input) return;
+  input.onchange = async () => {
+    const f = input.files[0]; if (!f) return;
+    if (!/\.(pptx|pdf)$/i.test(f.name)) return toast('只支持 .pdf 或 .pptx');
+    const c = S.course;
+    $('#qupl').innerHTML = `<div class="row small"><span class="spin"></span> 正在读取「${esc(f.name)}」，Claude 正在分析考试形式、要点和评分标准…（约半分钟，请保持页面打开）</div>`;
+    try {
+      const buf = await f.arrayBuffer();
+      const parsed = /\.pdf$/i.test(f.name) ? await parsePdf(buf) : await parsePptx(buf);
+      const pages = parsed.slides.map((s) => ({ page: s.page, text: [...s.text, ...s.notes] }));
+      if (!pages.some((x) => x.text.length)) throw new Error('这个文件里提取不到文字（可能是扫描图片），暂时无法分析');
+      const text = pages.map((x) => `[第 ${x.page} 页]\n${x.text.join('\n')}`).join('\n\n').slice(0, 60000);
+      const analysis = cleanAnalysis(await ai(QUIZ_PROMPT(c, text), { tier: 'default' }));
+      const list = await getQuizzes(c.id);
+      const q = { id: rid(), fileName: f.name, text, analysis, studies: {}, createdAt: Date.now() };
+      list.push(q); await saveQuizzes(c.id, list);
+      S.quiz = q.id; viewQuiz(v);
+    } catch (e) { $('#qupl').innerHTML = `<div class="banner bad">${esc(e.message)}</div>`; }
+  };
+}
+async function viewQuiz(v) {
+  const c = S.course, list = await getQuizzes(c.id);
+  if (!list.length) {
+    v.innerHTML = `<div class="card"><h3>Quiz 备考</h3><p class="muted">上传老师发的 quiz / 考试说明，Claude 会读懂考什么、怎么评分，然后按课件为你准备备考讲解、逐点练习和模拟考试。</p>
+      ${quizUploadHtml('上传 quiz 文件')}<p class="small muted">没有 quiz 文件也没关系：其他功能会按正常讲义学习。</p></div>`;
+    return bindQuizUpload(v);
+  }
+  const quiz = list.find((q) => q.id === S.quiz) || list[list.length - 1];
+  S.quiz = quiz.id;
+  const a = quiz.analysis;
+  v.innerHTML = `<div class="row between"><label class="grow" style="max-width:420px">选择 quiz<select id="qsel">${list.map((q) => `<option value="${q.id}" ${q.id === quiz.id ? 'selected' : ''}>${esc(q.analysis.title)}</option>`).join('')}</select></label>
+      <div class="row"><button class="btn sm" id="qadd">＋ 再上传一个</button><button class="btn sm ghost danger" id="qdel">删除此 quiz</button></div></div><div id="qbox"></div>
+    <div class="card"><div class="row between"><h3>${esc(a.title)}</h3><span class="row"><span class="pill">${FORMAT_ZH[a.format] || esc(a.format)}</span>${a.total_marks ? `<span class="pill warn">${esc(a.total_marks)}</span>` : ''}</span></div>
+      <p><b>要做什么：</b>${esc(a.task_zh)}</p>
+      ${a.required_points.length ? `<div><b>必须覆盖的要点：</b><div class="chips">${a.required_points.map((x) => `<span class="${x.compulsory ? 'must' : ''}">${esc(x.name_zh)}（${esc(x.name_ms)}）${x.compulsory ? ' · 必选' : ''}</span>`).join('')}</div></div>` : ''}
+      ${a.rules_zh.length ? `<div><b>考试规则：</b><ul>${a.rules_zh.map((r) => `<li>${esc(r)}</li>`).join('')}</ul></div>` : ''}
+      ${a.criteria.length ? `<details><summary><b>评分标准（${a.criteria.length} 项）</b></summary><div class="tablebox"><table><tr><td><b>标准</b></td><td>弱</td><td>良</td><td>优</td></tr>${a.criteria.map((k) => `<tr><td><b>${esc(k.name_zh)}</b><div class="small muted">${esc(k.name_ms)}</div></td><td class="small">${esc(k.weak_zh)}</td><td class="small">${esc(k.good_zh)}</td><td class="small">${esc(k.excellent_zh)}</td></tr>`).join('')}</table></div></details>` : ''}
+      ${a.related_pages.length ? `<div class="small muted">相关课件页：第 ${a.related_pages.join('、')} 页</div>` : ''}</div>
+    <div class="card"><div class="row between"><h3>模拟考试</h3><button class="btn primary" id="spinbtn">随机抽一个话题</button></div><p class="small muted">和真实考试一样：随机抽话题、不看范文，答完按老师的评分标准打分。</p></div>
+    ${a.topics.map((t) => `<div class="card"><div class="row between"><div class="grow"><b class="ms">${esc(t.name_ms)}</b> <span class="muted">${esc(t.name_zh)}</span>${quiz.studies?.[t.id] ? ' <span class="pill good">已备考讲解</span>' : ''}${t.note_zh ? `<div class="small muted">${esc(t.note_zh)}</div>` : ''}</div>
+      <div class="row"><button class="btn sm" data-study="${t.id}">备考讲解</button><button class="btn sm" data-drill="${t.id}">逐点练习</button><button class="btn sm primary" data-mock="${t.id}">模拟考试</button></div></div></div>`).join('')}`;
+  $('#qsel').onchange = (e) => { S.quiz = e.target.value; viewQuiz(v); };
+  $('#qadd').onclick = () => { $('#qbox').innerHTML = quizUploadHtml('上传另一个 quiz 文件'); bindQuizUpload(v); };
+  $('#qdel').onclick = () => {
+    $('#qbox').innerHTML = `<div class="banner bad row between"><span>删除「${esc(a.title)}」？</span><span class="row"><button class="btn sm" id="qno">取消</button><button class="btn sm danger" id="qyes">删除</button></span></div>`;
+    $('#qno').onclick = () => ($('#qbox').innerHTML = '');
+    $('#qyes').onclick = async () => { await saveQuizzes(c.id, list.filter((q) => q.id !== quiz.id)); S.quiz = null; viewQuiz(v); };
+  };
+  const topicOf = (id) => a.topics.find((t) => t.id === id);
+  $$('[data-study]', v).forEach((b) => (b.onclick = () => quizStudy(v, quiz, topicOf(b.dataset.study))));
+  $$('[data-drill]', v).forEach((b) => (b.onclick = () => quizDrill(v, quiz, topicOf(b.dataset.drill), b)));
+  $$('[data-mock]', v).forEach((b) => (b.onclick = () => quizMock(v, quiz, topicOf(b.dataset.mock))));
+  $('#spinbtn').onclick = () => {
+    const btn = $('#spinbtn'); btn.disabled = true; let n = 0;
+    const tm = setInterval(() => { btn.textContent = a.topics[n++ % a.topics.length].name_ms; if (n > 12) { clearInterval(tm); const t = a.topics[Math.floor(Math.random() * a.topics.length)]; btn.textContent = '抽到：' + t.name_ms; setTimeout(() => quizMock(v, quiz, t), 700); } }, 90);
+  };
+}
+async function loadStudy(quiz, topic, regenerate) {
+  const c = S.course;
+  if (quiz.studies?.[topic.id] && !regenerate) return quiz.studies[topic.id];
+  const a = quiz.analysis;
+  const prompt = `你是马来西亚标准马来语老师，帮中文母语学生针对一次测验备考。根据测验要求和课程讲义，为指定话题准备备考讲解：
+- points：每个要求的要点一项：用什么马来语句型表达（pattern_ms，如 "Nama saya ___."）、中文讲解、2–3 个例句。来自课程讲义的 source="slide" 并在 pages 填页码；来自测验文件的 source="quiz"；你补充的 source="supplement"。
+- vocabulary：这个话题需要会说的词（优先用课件里的词）。
+- model_answer：一份符合测验要求的范文（句子数量 = 要求数量，没有要求就 5 句），每句标明对应要点；用简单、地道的马来西亚标准马来语，只用课程程度的词汇和语法。intro_zh 提醒学生把个人信息换成自己的。
+- criteria_tips：针对每个评分标准的具体建议。common_mistakes：中国学生在这个话题上的常见错误及改正。
+课程：《${c.title}》
+【测验要求】${JSON.stringify(a)}
+【课程讲义摘要】
+${courseDigest(c, a.related_pages) || courseDigest(c) || '（暂无讲义）'}
+话题：「${topic.name_ms}（${topic.name_zh}）」
+只回复一个 JSON 对象：{"intro_zh":"...","points":[{"point_zh":"姓名","pattern_ms":"Nama saya ___.","explanation_zh":"...","examples":[{"ms":"...","zh":"..."}],"source":"slide","pages":[3]}],"vocabulary":[{"ms":"...","zh":"...","source":"slide"}],"model_answer":[{"ms":"...","zh":"...","point_zh":"姓名"}],"criteria_tips":[{"criterion_zh":"发音","tip_zh":"..."}],"common_mistakes":[{"wrong_ms":"...","right_ms":"...","explanation_zh":"..."}]}`;
+  const r = await ai(prompt, { tier: 'default' });
+  const st = {
+    intro_zh: String(r?.intro_zh || ''),
+    points: arr(r?.points).filter((p) => p && p.point_zh).map((p) => ({ point_zh: String(p.point_zh), pattern_ms: String(p.pattern_ms || ''), explanation_zh: String(p.explanation_zh || ''), examples: arr(p.examples).filter((e) => e && e.ms), source: p.source || 'supplement', pages: arr(p.pages).map(Number).filter(Boolean) })),
+    vocabulary: arr(r?.vocabulary).filter((x) => x && x.ms), model_answer: arr(r?.model_answer).filter((x) => x && x.ms),
+    criteria_tips: arr(r?.criteria_tips).filter((x) => x && x.tip_zh), common_mistakes: arr(r?.common_mistakes).filter((x) => x && x.right_ms),
+  };
+  const list = await getQuizzes(c.id), q = list.find((x) => x.id === quiz.id);
+  if (q) { q.studies = { ...(q.studies || {}), [topic.id]: st }; await saveQuizzes(c.id, list); }
+  quiz.studies = { ...(quiz.studies || {}), [topic.id]: st };
+  return st;
+}
+async function quizStudy(v, quiz, topic, regenerate = false) {
+  v.innerHTML = `<div class="card row small"><span class="spin"></span> Claude 正在根据 quiz 要求和课件，为「${esc(topic.name_zh)}」准备备考讲解…（约半分钟）</div>`;
+  let s;
+  try { s = await loadStudy(quiz, topic, regenerate); } catch (e) { v.innerHTML = `<div class="banner bad">${esc(e.message)}</div><div><button class="btn" id="back">返回</button></div>`; $('#back').onclick = () => viewQuiz(v); return; }
+  v.innerHTML = `<div class="row between"><button class="btn sm" id="back">‹ 返回 quiz</button><button class="btn sm ghost" id="regen">重新生成</button></div>
+    <div class="card"><h3><span class="ms">${esc(topic.name_ms)}</span> · ${esc(topic.name_zh)}</h3><p>${esc(s.intro_zh)}</p><p class="small muted">${srcTag('slide')} 来自课件　${srcTag('quiz')} 来自 quiz 文件　${srcTag('supplement')} AI 补充</p></div>
+    <div class="card"><h3>按要点学句型</h3>${s.points.map((p) => `<div><b>${esc(p.point_zh)}</b>${srcTag(p.source)}${p.pages.length ? ` <span class="small muted">课件第 ${p.pages.join('、')} 页</span>` : ''}<div class="ms">${esc(p.pattern_ms)}</div><div class="small">${esc(p.explanation_zh)}</div><ul>${p.examples.map((e) => `<li><span class="ms">${esc(e.ms)}</span> ${sayBtns(e.ms)}<br><span class="small muted">${esc(e.zh)}</span></li>`).join('')}</ul></div>`).join('')}</div>
+    <div class="card"><h3>范文</h3><p class="small muted">模拟考试时不会显示范文。请把范文里的个人信息换成你自己的。</p><div><button class="btn sm" id="playall">连续播放范文</button></div>
+      <ol>${s.model_answer.map((m) => `<li><span class="ms">${esc(m.ms)}</span> ${sayBtns(m.ms)}<br><span class="small muted">${esc(m.zh)} · ${esc(m.point_zh)}</span></li>`).join('')}</ol></div>
+    ${s.vocabulary.length ? `<div class="card"><h3>常用词</h3><div class="tablebox"><table>${s.vocabulary.map((x) => `<tr><td><span class="ms">${esc(x.ms)}</span>${srcTag(x.source)} ${sayBtns(x.ms)}</td><td>${esc(x.zh)}</td></tr>`).join('')}</table></div></div>` : ''}
+    ${s.criteria_tips.length ? `<div class="card"><h3>按评分标准准备</h3><ul>${s.criteria_tips.map((t) => `<li><b>${esc(t.criterion_zh)}：</b>${esc(t.tip_zh)}</li>`).join('')}</ul></div>` : ''}
+    ${s.common_mistakes.length ? `<div class="card"><h3>常见错误</h3>${s.common_mistakes.map((m) => `<div class="err"><s>${esc(m.wrong_ms)}</s> → <span class="ms">${esc(m.right_ms)}</span> ${sayBtns(m.right_ms)}<br>${esc(m.explanation_zh)}</div>`).join('')}</div>` : ''}
+    <div class="row" style="justify-content:center"><button class="btn" id="drill">逐点练习</button><button class="btn primary" id="mock">模拟考试</button></div>`;
+  $('#back').onclick = () => viewQuiz(v);
+  $('#regen').onclick = () => quizStudy(v, quiz, topic, true);
+  $('#playall').onclick = () => { if (!Speech.ms) return toast('这台设备没有马来语语音'); Speech.seq(s.model_answer.map((m) => ({ text: m.ms, lang: 'ms' }))); };
+  $('#drill').onclick = (e) => quizDrill(v, quiz, topic, e.target);
+  $('#mock').onclick = () => quizMock(v, quiz, topic);
+}
+async function quizDrill(v, quiz, topic, btn) {
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> 准备题目…'; }
+  try {
+    const s = await loadStudy(quiz, topic);
+    const qs = [];
+    for (const p of s.points) { const ex = p.examples[0]; if (ex) qs.push({ page: p.pages[0] || null, prompt_zh: `【${topic.name_zh} · ${p.point_zh}】用马来语怎么说：「${ex.zh}」`, expected_ms: ex.ms, acceptable_ms: p.examples.slice(1).map((e) => e.ms), focus_zh: `${p.point_zh}：${p.pattern_ms}`, source: p.source, item_ms: ex.ms, item_zh: ex.zh }); }
+    for (const m of s.model_answer) qs.push({ page: null, prompt_zh: `【${topic.name_zh} · ${m.point_zh}】用马来语怎么说：「${m.zh}」`, expected_ms: m.ms, acceptable_ms: [], focus_zh: m.point_zh, source: 'supplement', item_ms: m.ms, item_zh: m.zh });
+    if (!qs.length) throw new Error('没有可练习的题目，请先重新生成备考讲解');
+    runQuiz(v, 'speaking', qs, `逐点练习 · ${topic.name_zh}`, 'quiz');
+  } catch (e) { toast(e.message, 6000); if (btn) { btn.disabled = false; btn.textContent = '逐点练习'; } }
+}
+function quizMock(v, quiz, topic) {
+  const a = quiz.analysis, n = a.sentence_count || 0, c = S.course;
+  v.innerHTML = `<div class="row between"><button class="btn sm" id="back">‹ 返回 quiz</button><span class="pill warn">模拟考试 · 不看范文</span></div>
+    <div class="card center"><div class="muted">你抽到的话题</div><div class="topicname">${esc(topic.name_ms)}</div><div>${esc(topic.name_zh)}</div><p>${esc(a.task_zh)}</p>
+      ${a.required_points.length ? `<div class="chips" style="justify-content:center">${a.required_points.map((x) => `<span class="${x.compulsory ? 'must' : ''}">${esc(x.name_zh)}${x.compulsory ? '（必选）' : ''}</span>`).join('')}</div>` : ''}</div>
+    <div id="mres"></div>
+    <div class="dock"><form id="mform" class="stack"><textarea id="mtext" placeholder="点这里，再点键盘上的 🎤，用马来语${n ? `一口气说完 ${n} 个句子` : '说出你的回答'}；也可以直接打字。"></textarea><div class="row" style="justify-content:flex-end"><button class="btn primary">交卷评分</button></div></form>
+      <div class="hint">用键盘听写时，请先切到马来语键盘。体验版无法录音，所以发音和流利度不打分。</div></div>`;
+  $('#back').onclick = () => viewQuiz(v);
+  Speech.seq([{ text: `你抽到的话题是：${topic.name_zh}。准备好就开始吧。`, lang: 'zh' }]);
+  $('#mform').onsubmit = async (e) => {
+    e.preventDefault();
+    const ans = $('#mtext').value.trim(); if (!ans) return;
+    const box = $('#mres');
+    box.innerHTML = `<div class="card small"><div class="muted">你的回答：「${esc(ans)}」</div><div><span class="spin"></span> 老师按评分标准打分中…</div></div>`;
+    const prompt = `你是严格而耐心的马来西亚标准马来语老师，按测验的评分标准给学生的模拟考试打分。学生的回答来自打字或手机键盘的语音输入，可能有识别误差，若错误可能来自识别，possible_asr_error=true。
+- sentences：把回答拆成句子：heard 学生原句，corrected_ms 改正后的句子，ok 是否基本正确，point_zh 对应要点，issue_zh 问题说明（正确则空字符串）。
+- points：逐个检查测验要求的要点是否覆盖；必选要点没说、句子数量不符合要求，都要在 overall_zh 里指出。
+- criteria：按测验的每个评分标准给 weak/good/excellent 并点评。本次没有录音，发音、流利度这类需要听声音的标准一律填 not_assessed 并说明“体验版无法录音”。
+- score / max_score：按测验分值折算（分值见 total_marks；没有分值按 10 分制），并且只按能评估的标准打分。
+- overall_zh：简短、口语化的中文总评（会被读出来）。next_steps_zh：2–4 条具体改进建议。
+【测验要求】${JSON.stringify(a)}
+抽到的话题：${topic.name_ms}（${topic.name_zh}）
+【学生的回答】「${ans}」
+只回复一个 JSON 对象：{"possible_asr_error":false,"sentences":[{"heard":"...","corrected_ms":"...","ok":true,"point_zh":"姓名","issue_zh":""}],"points":[{"name_zh":"姓名","covered":true}],"criteria":[{"name_zh":"发音","level":"not_assessed","comment_zh":"..."}],"score":7,"max_score":10,"overall_zh":"...","next_steps_zh":["..."]}`;
+    try {
+      const r = await ai(prompt, { tier: 'default' });
+      const sents = arr(r?.sentences), pts = arr(r?.points), crit = arr(r?.criteria), steps = arr(r?.next_steps_zh);
+      const score = Number(r?.score) || 0, max = Number(r?.max_score) || 10, pct = score / max;
+      box.innerHTML = `<div class="card"><div class="row"><span class="score ${pct >= 0.8 ? 'good' : pct >= 0.6 ? 'mid' : 'bad'}">${score} / ${max}</span>${r?.possible_asr_error ? '<span class="pill warn">可能有语音识别误差</span>' : ''}</div><p>${esc(r?.overall_zh)}</p>
+        ${crit.length ? `<div class="tablebox"><table>${crit.map((k) => `<tr><td style="width:30%"><b>${esc(k.name_zh)}</b></td><td><span class="level ${LEVEL_ZH[k.level] ? k.level : 'not_assessed'}">${LEVEL_ZH[k.level] || '未评估'}</span> <span class="small">${esc(k.comment_zh)}</span></td></tr>`).join('')}</table></div>` : ''}
+        ${pts.length ? `<div><b>要点覆盖：</b><div class="chips">${pts.map((x) => `<span class="${x.covered ? 'ok' : 'miss'}">${x.covered ? '✓' : '✗'} ${esc(x.name_zh)}</span>`).join('')}</div></div>` : ''}
+        <div><b>逐句点评：</b>${sents.map((x, k) => `<div class="${x.ok ? 'okbox' : 'err'} small" style="margin-top:6px">${k + 1}. 「${esc(x.heard)}」${x.ok ? ' ✓' : ''}${x.corrected_ms && x.corrected_ms !== x.heard ? `<br>→ <span class="ms">${esc(x.corrected_ms)}</span> ${sayBtns(x.corrected_ms)}` : ''}${x.issue_zh ? `<br>${esc(x.issue_zh)}` : ''}</div>`).join('')}</div>
+        ${steps.length ? `<div><b>下一步：</b><ul>${steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+        <div class="row" style="justify-content:flex-end"><button class="btn" id="m-study">看备考讲解</button><button class="btn" id="m-again">同一话题再来</button><button class="btn primary" id="m-spin">换个话题</button></div></div>`;
+      Speech.seq([{ text: String(r?.overall_zh || ''), lang: 'zh' }].filter((x) => x.text));
+      const pp = await getProg(c.id);
+      pp.mocks = [...(pp.mocks || []), { at: Date.now(), quizId: quiz.id, topic: topic.name_zh, score, max }].slice(-50);
+      for (const x of sents) if (!x.ok && x.corrected_ms) record(pp, { ms: x.corrected_ms, zh: `${topic.name_zh}：${x.point_zh || ''}`, correct: false, mode: 'mock', error: x.issue_zh, answer: x.heard });
+      await Store.set('p_' + c.id, pp);
+      $('#m-study').onclick = () => quizStudy(v, quiz, topic);
+      $('#m-again').onclick = () => quizMock(v, quiz, topic);
+      $('#m-spin').onclick = () => { const o = a.topics.filter((t) => t.id !== topic.id); const pool = o.length ? o : a.topics; quizMock(v, quiz, pool[Math.floor(Math.random() * pool.length)]); };
+    } catch (err) { box.innerHTML = `<div class="banner bad">${esc(err.message)}</div>`; }
+  };
 }
 
 // ================= 启动 =================

@@ -48,7 +48,7 @@ export async function synthesize({ text, voice = 'ms-female', speed = 'normal' }
 function pick(obj, k) { return obj?.[k] ?? obj?.PronunciationAssessment?.[k]; }
 
 // audio: 16kHz 16bit 单声道 WAV（由前端录音并编码）
-export async function recognize({ audio, language = 'ms-MY', referenceText = '' }) {
+export async function recognize({ audio, language = 'ms-MY', referenceText = '', selfAssess = false }) {
   requireSpeech();
   if (!audio?.length || audio.length < 3200) throw Object.assign(new Error('录音太短，请再说一次'), { status: 400 });
   const lang = ['ms-MY', 'zh-CN', 'en-US'].includes(language) ? language : 'ms-MY';
@@ -69,6 +69,13 @@ export async function recognize({ audio, language = 'ms-MY', referenceText = '' 
     }
     return fetch(url, { method: 'POST', headers: h, body: audio });
   };
+  if (selfAssess && !ref) {
+    // 自由说话（如模拟考试）：先识别，再以识别结果为参考文本做一次发音评测
+    const first = await recognize({ audio, language: lang });
+    if (!first.ok || !first.lexical) return first;
+    const second = await recognize({ audio, language: lang, referenceText: first.lexical });
+    return { ...first, assessment: second.assessment || null, assessmentNote: second.assessmentNote || null };
+  }
   let res = await call(Boolean(ref));
   if (!res.ok && ref) {
     // 若该区域/语言暂不支持发音评测，退回为纯识别，并明确告知前端

@@ -121,8 +121,8 @@ class Recorder {
 }
 export const recorder = new Recorder();
 
-export async function transcribe(blob, { lang = 'ms-MY', ref = '' } = {}) {
-  const r = await fetch(`/api/stt?${new URLSearchParams({ lang, ref })}`, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: blob });
+export async function transcribe(blob, { lang = 'ms-MY', ref = '', assess = '' } = {}) {
+  const r = await fetch(`/api/stt?${new URLSearchParams({ lang, ref, assess })}`, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: blob });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || `识别失败 (${r.status})`);
   return j;

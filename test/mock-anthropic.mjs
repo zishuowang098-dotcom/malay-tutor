@@ -7,6 +7,25 @@ function respond(body) {
   const schema = body.output_config?.format?.schema;
   const keys = Object.keys(schema?.properties || {});
   const userText = JSON.stringify(body.messages.at(-1).content);
+  if (keys.includes('required_points')) {
+    if (!userText.includes('Nama*')) throw new Error('quiz text missing');
+    return { title: 'KUIZ 1.1 – Pengenalan Diri / Keluarga / Kawan', format: 'oral_presentation', summary_zh: '口头自我介绍测验', task_zh: '抽到一个话题后，用 5 个简单马来语句子介绍', sentence_count: 5, total_marks: '10M, 10%',
+      instructions_zh: ['个人测验'], rules_zh: ['考试时不能看笔记'],
+      topics: [{ id: 'myself', name_ms: 'Diri Saya', name_zh: '我自己', note_zh: '' }, { id: 'family', name_ms: 'Keluarga Saya', name_zh: '我的家人（选一位）', note_zh: '' }, { id: 'friend', name_ms: 'Kawan Saya', name_zh: '我的朋友', note_zh: '' }],
+      required_points: [{ name_ms: 'Nama', name_zh: '姓名', compulsory: true }, { name_ms: 'Asal', name_zh: '籍贯', compulsory: false }, { name_ms: 'Umur', name_zh: '年龄', compulsory: false }],
+      criteria: [{ name_ms: 'Sebutan', name_zh: '发音', weak_zh: '错误多', good_zh: '少量错误', excellent_zh: '基本正确' }, { name_ms: 'Tatabahasa', name_zh: '语法', weak_zh: '错误多', good_zh: '少量', excellent_zh: '无错误' }],
+      related_pages: [3] };
+  }
+  if (keys.includes('model_answer')) {
+    return { intro_zh: '把范文中的信息换成你自己的。', points: [{ point_zh: '姓名', pattern_ms: 'Nama saya ___.', explanation_zh: '介绍名字', examples: [{ ms: 'Nama saya Ali.', zh: '我的名字是阿里。' }], source: 'slide', pages: [3] }],
+      vocabulary: [{ ms: 'umur', zh: '年龄', source: 'quiz' }], model_answer: [{ ms: 'Nama saya Ali.', zh: '我叫阿里。', point_zh: '姓名' }, { ms: 'Saya berasal dari China.', zh: '我来自中国。', point_zh: '籍贯' }],
+      criteria_tips: [{ criterion_zh: '发音', tip_zh: 'berasal 的 r 要弹舌' }], common_mistakes: [{ wrong_ms: 'Saya nama Ali', right_ms: 'Nama saya Ali', explanation_zh: '词序' }] };
+  }
+  if (keys.includes('sentences')) {
+    return { possible_asr_error: false, sentences: [{ heard: 'nama saya ali', corrected_ms: 'Nama saya Ali.', ok: true, point_zh: '姓名', issue_zh: '' }, { heard: 'saya umur dua puluh', corrected_ms: 'Umur saya dua puluh tahun.', ok: false, point_zh: '年龄', issue_zh: '词序错误，并缺少 tahun' }],
+      points: [{ name_zh: '姓名', covered: true }, { name_zh: '籍贯', covered: false }], criteria: [{ name_zh: '发音', level: 'not_assessed', comment_zh: '打字回答，无法评估' }, { name_zh: '语法', level: 'good', comment_zh: '一处词序错误' }],
+      score: 6, max_score: 10, overall_zh: '名字介绍得很好，但只说了两句，还缺籍贯。', next_steps_zh: ['补足 5 句'] };
+  }
   if (keys.includes('pages')) {
     const pages = [...userText.matchAll(/===== 第 (\d+) 页 =====/g)].map((m) => Number(m[1]));
     return { pages: pages.map((p) => ({

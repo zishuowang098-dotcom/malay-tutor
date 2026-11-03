@@ -24,7 +24,7 @@ const I = {
 };
 // 可点读的马来语：🔊 正常 / 🐢 慢速
 const sayBtns = (text, lang = 'ms') => `<span class="say"><button data-say="${esc(text)}" data-lang="${lang}" title="播放" aria-label="播放">${I.play}</button>${lang === 'ms' ? `<button data-say="${esc(text)}" data-lang="ms" data-speed="slow" title="慢速" aria-label="慢速播放">${I.slow}</button>` : ''}</span>`;
-const srcTag = (s) => (s === 'supplement' ? '<span class="src supplement" title="课件之外，AI 补充的内容">AI补充</span>' : s === 'slide' ? '<span class="src slide" title="来自课件原文">课件</span>' : '');
+const srcTag = (s) => (s === 'supplement' ? '<span class="src supplement" title="课件之外，AI 补充的内容">AI补充</span>' : s === 'slide' ? '<span class="src slide" title="来自课件原文">课件</span>' : s === 'quiz' ? '<span class="src quiz" title="来自 quiz 文件">Quiz</span>' : '');
 const scoreCls = (s) => (s >= 80 ? 'good' : s >= 60 ? 'mid' : 'bad');
 
 document.addEventListener('click', (e) => {
@@ -47,7 +47,7 @@ $('#btn-settings').onclick = () => {
 
 // ---------------- 麦克风组件 ----------------
 // 点击开始录音，再点结束（或自动在停顿后结束）。完成后调用 onResult(识别结果)
-function mountMic(el, { getLang, getRef = () => '', onResult, label = '点击说话' }) {
+function mountMic(el, { getLang, getRef = () => '', onResult, label = '点击说话', recOpts = {}, assess = '' }) {
   el.innerHTML = `<div class="mic-wrap"><button class="mic" aria-label="录音">${I.mic}</button></div><div class="mic-label">${esc(label)}</div>`;
   const btn = $('.mic', el), lab = $('.mic-label', el);
   let busy = false;
@@ -58,11 +58,11 @@ function mountMic(el, { getLang, getRef = () => '', onResult, label = '点击说
       player.stop(); player.unlock();
       try {
         btn.classList.add('rec'); btn.innerHTML = I.stop; setLabel('正在听…说完后点击停止');
-        const rec = await recorder.start({ onLevel: (l) => btn.style.setProperty('--lvl', l) });
+        const rec = await recorder.start({ onLevel: (l) => btn.style.setProperty('--lvl', l), ...recOpts });
         btn.classList.remove('rec'); btn.innerHTML = I.mic; btn.style.setProperty('--lvl', 0);
         if (!rec.spoke || rec.seconds < 0.4) { setLabel('没有听到声音，请再试一次'); return; }
         busy = true; btn.classList.add('busy'); setLabel('识别中…');
-        const res = await transcribe(rec.blob, { lang: getLang(), ref: getRef() });
+        const res = await transcribe(rec.blob, { lang: getLang(), ref: getRef(), assess });
         busy = false; btn.classList.remove('busy');
         if (!res.ok) { setLabel(res.message || '没有识别到内容，请再说一次'); return; }
         setLabel(label);
@@ -151,7 +151,7 @@ async function doUpload(file) {
 }
 
 // ---------------- 课程页 ----------------
-const TABS = [['learn', '🎓 上课'], ['notes', '📖 讲义'], ['practice', '🗣️ 发音'], ['speak', '💬 口语测试'], ['listen', '🎧 听力测试'], ['review', '🔁 复习']];
+const TABS = [['learn', '🎓 上课'], ['notes', '📖 讲义'], ['quiz', '📝 Quiz 备考'], ['practice', '🗣️ 发音'], ['speak', '💬 口语测试'], ['listen', '🎧 听力测试'], ['review', '🔁 复习']];
 async function renderCourse(id, tab, page) {
   let c;
   try { c = await api(`/api/courses/${id}`); } catch (e) { app.innerHTML = `<div class="banner bad">${esc(e.message)}</div><a href="#/">返回</a>`; return; }
@@ -171,7 +171,7 @@ async function renderCourse(id, tab, page) {
     if (n && (n.status !== 'processing' || n.slides.filter((s) => s.lesson).length !== ready) && !recorder.active && !state.busy) route();
   }, 5000));
   const view = $('#view');
-  ({ learn: viewLearn, notes: viewNotes, practice: viewPractice, speak: viewSpeak, listen: viewListen, review: viewReview }[tab] || viewLearn)(view, c, page);
+  ({ learn: viewLearn, notes: viewNotes, quiz: viewQuiz, practice: viewPractice, speak: viewSpeak, listen: viewListen, review: viewReview }[tab] || viewLearn)(view, c, page);
 }
 
 // ---------------- 讲义 ----------------
@@ -477,6 +477,158 @@ async function viewReview(view, c) {
   };
   if ($('#start')) $('#start').onclick = () => start(due);
   if ($('#start-weak')) $('#start-weak').onclick = () => start(weak);
+}
+
+// ---------------- Quiz 备考 ----------------
+const FORMAT_ZH = { oral_presentation: '口头陈述', oral_qa: '口头问答', written: '笔试', multiple_choice: '选择题', mixed: '综合', other: '其他' };
+const LEVEL_ZH = { weak: '弱', good: '良', excellent: '优', not_assessed: '未评估' };
+function quizUploader(c, label) {
+  return `<label class="drop" id="qdrop"><input type="file" accept=".pdf,.pptx"><b>${label}</b><div class="muted small">.pdf / .pptx，例如老师发的 quiz 说明、考试要求、评分标准</div></label><div id="qupl"></div>`;
+}
+function bindQuizUploader(c) {
+  const input = $('#qdrop input'); if (!input) return;
+  input.onchange = async () => {
+    const f = input.files[0]; if (!f) return;
+    const fd = new FormData(); fd.append('file', f);
+    $('#qupl').innerHTML = `<div class="row small"><span class="spinner"></span> 正在上传「${esc(f.name)}」…</div>`;
+    try { const q = await api(`/api/courses/${c.id}/quizzes`, { method: 'POST', body: fd }); pref.quiz = q.id; route(); }
+    catch (e) { $('#qupl').innerHTML = `<div class="banner bad">${esc(e.message)}</div>`; }
+  };
+}
+const pref = {};
+function viewQuiz(view, c) {
+  const quizzes = c.quizzes || [];
+  if (!quizzes.length) {
+    view.innerHTML = `<div class="card stack"><h2>Quiz 备考</h2>
+      <p class="muted">上传老师发的 quiz / 考试说明，AI 会读懂考什么、怎么评分，然后按课件为你准备对应的备考讲解、逐点练习和模拟考试。</p>
+      ${quizUploader(c, '上传 quiz 文件')}
+      <p class="small muted">没有 quiz 文件也没关系：其他功能会按正常讲义学习。</p></div>`;
+    return bindQuizUploader(c);
+  }
+  const quiz = quizzes.find((q) => q.id === pref.quiz) || quizzes[quizzes.length - 1];
+  pref.quiz = quiz.id;
+  const head = `<div class="row between"><label class="grow" style="max-width:420px">选择 quiz<select id="qsel">${quizzes.map((q) => `<option value="${q.id}" ${q.id === quiz.id ? 'selected' : ''}>${esc(q.analysis?.title || q.fileName)}</option>`).join('')}</select></label>
+    <div class="row"><button class="btn sm" id="qadd">＋ 再上传一个</button><button class="btn sm ghost danger" id="qdel">删除此 quiz</button></div></div><div id="qaddbox"></div>`;
+  const bindHead = () => {
+    $('#qsel').onchange = (e) => { pref.quiz = e.target.value; route(); };
+    $('#qadd').onclick = () => { $('#qaddbox').innerHTML = quizUploader(c, '上传另一个 quiz 文件'); bindQuizUploader(c); };
+    $('#qdel').onclick = () => {
+      $('#qaddbox').innerHTML = `<div class="banner bad row between"><span>删除「${esc(quiz.analysis?.title || quiz.fileName)}」？</span><span class="row"><button class="btn sm" id="qno">取消</button><button class="btn sm danger" id="qyes">删除</button></span></div>`;
+      $('#qno').onclick = () => ($('#qaddbox').innerHTML = '');
+      $('#qyes').onclick = async () => { await api(`/api/courses/${c.id}/quizzes/${quiz.id}`, { method: 'DELETE' }); pref.quiz = null; route(); };
+    };
+  };
+  if (quiz.status === 'analyzing') {
+    view.innerHTML = head + `<div class="card row"><span class="spinner"></span> AI 正在阅读「${esc(quiz.fileName)}」，分析考试形式、要点和评分标准…</div>`;
+    bindHead();
+    state.timers.push(setInterval(async () => { const n = await api(`/api/courses/${c.id}`).catch(() => null); if (n?.quizzes?.find((q) => q.id === quiz.id)?.status !== 'analyzing') route(); }, 3000));
+    return;
+  }
+  if (quiz.status === 'error' || !quiz.analysis) {
+    view.innerHTML = head + `<div class="banner bad">分析失败：${esc(quiz.error || '未知错误')} <button class="btn sm" id="qre">重新分析</button></div>`;
+    bindHead();
+    $('#qre').onclick = async () => { await api(`/api/courses/${c.id}/quizzes/${quiz.id}/reanalyze`, { method: 'POST', body: {} }); route(); };
+    return;
+  }
+  const a = quiz.analysis;
+  view.innerHTML = head + `
+    <div class="card stack"><div class="row between"><h2 style="margin:0">${esc(a.title)}</h2><span class="row"><span class="pill">${FORMAT_ZH[a.format] || a.format}</span>${a.total_marks ? `<span class="pill warn">${esc(a.total_marks)}</span>` : ''}</span></div>
+      <div><b>要做什么：</b>${esc(a.task_zh)}</div>
+      ${a.required_points.length ? `<div><b>必须覆盖的要点：</b><div class="words">${a.required_points.map((p) => `<span class="${p.compulsory ? 'bad' : ''}" style="${p.compulsory ? 'text-decoration:none' : ''}">${esc(p.name_zh)}（${esc(p.name_ms)}）${p.compulsory ? ' · 必选' : ''}</span>`).join('')}</div></div>` : ''}
+      ${a.rules_zh.length ? `<div><b>考试规则：</b><ul>${a.rules_zh.map((r) => `<li>${esc(r)}</li>`).join('')}</ul></div>` : ''}
+      ${a.criteria.length ? `<details><summary><b>评分标准（${a.criteria.length} 项）</b></summary><div style="overflow-x:auto"><table class="vocab"><tr><td><b>标准</b></td><td>弱</td><td>良</td><td>优</td></tr>${a.criteria.map((k) => `<tr><td><b>${esc(k.name_zh)}</b><div class="small muted">${esc(k.name_ms)}</div></td><td class="small">${esc(k.weak_zh)}</td><td class="small">${esc(k.good_zh)}</td><td class="small">${esc(k.excellent_zh)}</td></tr>`).join('')}</table></div></details>` : ''}
+      ${a.instructions_zh.length ? `<details><summary class="small muted">其他说明</summary><ul class="small">${a.instructions_zh.map((r) => `<li>${esc(r)}</li>`).join('')}</ul></details>` : ''}
+      ${a.related_pages.length ? `<div class="small muted">相关课件页：${a.related_pages.map((p) => `<a href="#/c/${c.id}/learn/${p}">第 ${p} 页</a>`).join('、')}</div>` : ''}
+    </div>
+    <div class="card stack"><div class="row between"><h3 style="margin:0">模拟考试</h3><button class="btn primary" id="spin">🎲 随机抽一个话题</button></div>
+      <p class="small muted">和真实考试一样：随机抽话题、不看范文，说完后按老师的评分标准打分。</p></div>
+    ${a.topics.map((t) => `<div class="card"><div class="row between"><div><b class="ms">${esc(t.name_ms)}</b> <span class="muted">${esc(t.name_zh)}</span>${quiz.studies?.[t.id] ? ' <span class="pill good">已备考讲解</span>' : ''}<div class="small muted">${esc(t.note_zh)}</div></div>
+      <div class="row"><button class="btn sm" data-study="${t.id}">📖 备考讲解</button><button class="btn sm" data-drill="${t.id}">✏️ 逐点练习</button><button class="btn sm primary" data-mock="${t.id}">🎤 模拟考试</button></div></div></div>`).join('')}`;
+  bindHead();
+  const topicOf = (id) => a.topics.find((t) => t.id === id);
+  $$('[data-study]', view).forEach((b) => (b.onclick = () => quizStudyView(view, c, quiz, topicOf(b.dataset.study))));
+  $$('[data-drill]', view).forEach((b) => (b.onclick = () => quizDrill(view, c, quiz, topicOf(b.dataset.drill), b)));
+  $$('[data-mock]', view).forEach((b) => (b.onclick = () => { player.unlock(); quizMock(view, c, quiz, topicOf(b.dataset.mock)); }));
+  $('#spin').onclick = () => {
+    player.unlock();
+    const btn = $('#spin'); btn.disabled = true; let n = 0;
+    const timer = setInterval(() => { btn.textContent = '🎲 ' + a.topics[n++ % a.topics.length].name_ms; if (n > 12) { clearInterval(timer); const t = a.topics[Math.floor(Math.random() * a.topics.length)]; btn.textContent = '🎯 ' + t.name_ms; setTimeout(() => quizMock(view, c, quiz, t), 700); } }, 90);
+  };
+}
+async function loadStudy(c, quiz, topic, regenerate = false) {
+  return api(`/api/courses/${c.id}/quizzes/${quiz.id}/study`, { method: 'POST', body: { topicId: topic.id, regenerate } });
+}
+async function quizStudyView(view, c, quiz, topic, regenerate = false) {
+  view.innerHTML = `<div class="card row"><span class="spinner"></span> AI 正在根据 quiz 要求和课件，为「${esc(topic.name_zh)}」准备备考讲解…（约半分钟）</div>`;
+  let r;
+  try { r = await loadStudy(c, quiz, topic, regenerate); } catch (e) { view.innerHTML = `<div class="banner bad">${esc(e.message)}</div><button class="btn" id="back">返回</button>`; $('#back').onclick = () => viewQuiz(view, c); return; }
+  const s = r.study;
+  view.innerHTML = `<div class="row between"><button class="btn sm" id="back">‹ 返回 quiz</button><button class="btn sm ghost" id="regen">重新生成</button></div>
+    <div class="card stack"><h2 style="margin:0"><span class="ms">${esc(topic.name_ms)}</span> · ${esc(topic.name_zh)}</h2><p>${esc(s.intro_zh)}</p>
+      <p class="small muted">${srcTag('slide')} 来自课件　${srcTag('quiz')} 来自 quiz 文件　${srcTag('supplement')} AI 补充</p></div>
+    <div class="card stack"><h3>按要点学句型</h3>${s.points.map((p) => `<div><b>${esc(p.point_zh)}</b>${srcTag(p.source)}${p.pages.length ? ` <span class="small muted">课件第 ${p.pages.join('、')} 页</span>` : ''}<div><span class="ms">${esc(p.pattern_ms)}</span></div><div class="small">${esc(p.explanation_zh)}</div><ul>${p.examples.map((e) => `<li><span class="ms">${esc(e.ms)}</span> ${sayBtns(e.ms)}<br><span class="small muted">${esc(e.zh)}</span></li>`).join('')}</ul></div>`).join('')}</div>
+    <div class="card stack"><h3>范文</h3><p class="small muted">模拟考试时不会显示范文。请把范文里的个人信息换成你自己的。</p><button class="btn sm" id="playall">▶ 连续播放范文</button>
+      <ol>${s.model_answer.map((m) => `<li><span class="ms">${esc(m.ms)}</span> ${sayBtns(m.ms)}<br><span class="small muted">${esc(m.zh)} · ${esc(m.point_zh)}</span></li>`).join('')}</ol></div>
+    ${s.vocabulary.length ? `<div class="card"><h3>常用词</h3><table class="vocab">${s.vocabulary.map((v) => `<tr><td><span class="ms">${esc(v.ms)}</span>${srcTag(v.source)} ${sayBtns(v.ms)}</td><td>${esc(v.zh)}</td></tr>`).join('')}</table></div>` : ''}
+    ${s.criteria_tips.length ? `<div class="card stack"><h3>按评分标准准备</h3><ul>${s.criteria_tips.map((t) => `<li><b>${esc(t.criterion_zh)}：</b>${esc(t.tip_zh)}</li>`).join('')}</ul></div>` : ''}
+    ${s.common_mistakes.length ? `<div class="card stack"><h3>常见错误</h3>${s.common_mistakes.map((m) => `<div class="err small"><s>${esc(m.wrong_ms)}</s> → <span class="ms">${esc(m.right_ms)}</span> ${sayBtns(m.right_ms)}<br>${esc(m.explanation_zh)}</div>`).join('')}</div>` : ''}
+    <div class="row" style="justify-content:center"><button class="btn" id="drill">✏️ 逐点练习</button><button class="btn primary" id="mock">🎤 模拟考试</button></div>`;
+  $('#back').onclick = () => viewQuiz(view, c);
+  $('#regen').onclick = () => quizStudyView(view, c, quiz, topic, true);
+  $('#playall').onclick = () => { player.unlock(); player.playSegments(s.model_answer.map((m) => ({ text: m.ms, lang: 'ms' }))).catch((e) => toast(e.message)); };
+  $('#drill').onclick = (e) => quizDrill(view, c, quiz, topic, e.target);
+  $('#mock').onclick = () => { player.unlock(); quizMock(view, c, quiz, topic); };
+}
+async function quizDrill(view, c, quiz, topic, btn) {
+  player.unlock();
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 准备题目…'; }
+  try {
+    const { study } = await loadStudy(c, quiz, topic);
+    const qs = [];
+    for (const p of study.points) {
+      const ex = p.examples[0];
+      if (ex) qs.push({ page: p.pages[0] ?? null, prompt_zh: `【${topic.name_zh} · ${p.point_zh}】用马来语怎么说：「${ex.zh}」`, expected_ms: ex.ms, acceptable_ms: p.examples.slice(1).map((e) => e.ms), focus_zh: `${p.point_zh}：${p.pattern_ms}`, source: p.source, item_ms: ex.ms, item_zh: ex.zh });
+    }
+    for (const m of study.model_answer) qs.push({ page: null, prompt_zh: `【${topic.name_zh} · ${m.point_zh}】用马来语怎么说：「${m.zh}」`, expected_ms: m.ms, acceptable_ms: [], focus_zh: m.point_zh, source: 'supplement', item_ms: m.ms, item_zh: m.zh });
+    if (!qs.length) throw new Error('没有可练习的题目，请先重新生成备考讲解');
+    runQuiz(view, c, { kind: 'speaking', questions: qs, mode: 'quiz', title: `逐点练习 · ${topic.name_zh}` });
+  } catch (e) { toast(e.message, 6000); if (btn) { btn.disabled = false; btn.textContent = '✏️ 逐点练习'; } }
+}
+function quizMock(view, c, quiz, topic) {
+  const a = quiz.analysis;
+  const n = a.sentence_count || 0;
+  view.innerHTML = `<div class="row between"><button class="btn sm" id="back">‹ 返回 quiz</button><span class="pill warn">模拟考试 · 不看范文</span></div>
+    <div class="card center stack"><div class="muted">你抽到的话题</div><div class="spinwheel">${esc(topic.name_ms)}</div><div>${esc(topic.name_zh)}</div>
+      <div>${esc(a.task_zh)}</div>
+      ${a.required_points.length ? `<div class="words" style="justify-content:center">${a.required_points.map((p) => `<span class="${p.compulsory ? 'bad' : ''}" style="text-decoration:none">${esc(p.name_zh)}${p.compulsory ? '（必选）' : ''}</span>`).join('')}</div>` : ''}
+      <div class="small muted">准备好后点麦克风，${n ? `一口气说完 ${n} 个句子，` : ''}说完再点一次停止（最长约 55 秒）。</div></div>
+    <div id="mres"></div>
+    <div class="dock"><div id="mmic"></div>
+      <details style="margin-top:10px"><summary class="small muted">没有麦克风？改为打字</summary><form id="mtyped" class="stack" style="margin-top:8px"><textarea name="t" placeholder="把你的 ${n || ''} 个句子写在这里…"></textarea><button class="btn">提交</button></form></details></div>`;
+  $('#back').onclick = () => viewQuiz(view, c);
+  player.say(`你抽到的话题是：${topic.name_zh}。准备好就开始吧。`, 'zh').catch(() => {});
+  const grade = async (transcript, assessment) => {
+    const box = $('#mres');
+    box.innerHTML = `<div class="card"><div class="small muted">你的回答：「${esc(transcript)}」</div><div><span class="spinner"></span> 老师按评分标准打分中…</div></div>`;
+    try {
+      const r = await api(`/api/courses/${c.id}/quizzes/${quiz.id}/mock`, { method: 'POST', body: { topicId: topic.id, transcript, assessment } });
+      const pct = r.max_score ? r.score / r.max_score : 0;
+      box.innerHTML = `<div class="card stack"><div class="row"><span class="score ${pct >= .8 ? 'good' : pct >= .6 ? 'mid' : 'bad'}">${r.score} / ${r.max_score}</span>${r.possible_asr_error ? '<span class="pill warn">可能有语音识别误差</span>' : ''}</div>
+        <p>${esc(r.overall_zh)}</p>
+        <table class="vocab">${r.criteria.map((k) => `<tr><td style="width:30%"><b>${esc(k.name_zh)}</b></td><td><span class="level ${k.level}">${LEVEL_ZH[k.level]}</span> <span class="small">${esc(k.comment_zh)}</span></td></tr>`).join('')}</table>
+        ${r.points.length ? `<div><b>要点覆盖：</b><div class="words">${r.points.map((p) => `<span class="${p.covered ? '' : 'bad'}">${p.covered ? '✓' : '✗'} ${esc(p.name_zh)}</span>`).join('')}</div></div>` : ''}
+        <div><b>逐句点评：</b>${r.sentences.map((s, i) => `<div class="${s.ok ? 'ok-box' : 'err'} small" style="margin-top:6px">${i + 1}. 「${esc(s.heard)}」${s.ok ? ' ✓' : ''}${!s.ok || s.corrected_ms !== s.heard ? `<br>→ <span class="ms">${esc(s.corrected_ms)}</span> ${sayBtns(s.corrected_ms)}` : ''}${s.issue_zh ? `<br>${esc(s.issue_zh)}` : ''}</div>`).join('')}</div>
+        ${r.next_steps_zh.length ? `<div><b>下一步：</b><ul>${r.next_steps_zh.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+        ${assessment ? '' : '<div class="small muted">本次没有发音评分（打字回答，或语音评测不可用），发音和流利度未评估。</div>'}
+        <div class="row end"><button class="btn" id="m-study">看备考讲解</button><button class="btn" id="m-again">同一话题再来</button><button class="btn primary" id="m-spin">换个话题</button></div></div>`;
+      player.say(r.overall_zh, 'zh').catch(() => {});
+      $('#m-study').onclick = () => quizStudyView(view, c, quiz, topic);
+      $('#m-again').onclick = () => quizMock(view, c, quiz, topic);
+      $('#m-spin').onclick = () => { const others = a.topics.filter((t) => t.id !== topic.id); quizMock(view, c, quiz, (others.length ? others : a.topics)[Math.floor(Math.random() * (others.length || a.topics.length))]); };
+    } catch (e) { box.innerHTML = `<div class="banner bad">${esc(e.message)}</div>`; }
+  };
+  mountMic($('#mmic'), { getLang: () => 'ms-MY', label: '点击开始说，说完再点一次', recOpts: { autoStop: false, maxMs: 55000 }, assess: 'self', onResult: (res) => grade(res.text, res.assessment) });
+  $('#mtyped').onsubmit = (e) => { e.preventDefault(); const t = e.target.t.value.trim(); if (t) grade(t, null); };
 }
 
 // ---------------- 启动 ----------------

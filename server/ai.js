@@ -133,7 +133,9 @@ const TUTOR_SYSTEM = `你是学生的一对一马来语私人老师，像真人�
 - 语气亲切、简洁、口语化，像面对面上课。`;
 
 export async function tutorTurn({ course, page, history, userText, weakItems }) {
-  const sys = `${TUTOR_SYSTEM}\n\n课程：《${course.title}》\n${pageContext(course, page)}${weakItems?.length ? `\n\n【学生之前的薄弱点（可以在合适时机顺带复习）】\n${weakItems.map((w) => `${w.ms}（${w.zh}）错${w.wrong}次`).join('；')}` : ''}`;
+  const quizzes = (course.quizzes || []).filter((q) => q.analysis);
+  const quizBrief = quizzes.length ? `\n\n【这门课有测验，讲到相关内容时提醒学生“这是考点”】\n${quizzes.map((q) => `《${q.analysis.title}》：${q.analysis.task_zh}；要点：${q.analysis.required_points.map((p) => p.name_zh + (p.compulsory ? '(必选)' : '')).join('、')}`).join('\n')}` : '';
+  const sys = `${TUTOR_SYSTEM}\n\n课程：《${course.title}》\n${pageContext(course, page)}${quizBrief}${weakItems?.length ? `\n\n【学生之前的薄弱点（可以在合适时机顺带复习）】\n${weakItems.map((w) => `${w.ms}（${w.zh}）错${w.wrong}次`).join('；')}` : ''}`;
   const messages = [...history, { role: 'user', content: userText }];
   return callJSON({ system: sys, messages, schema: TUTOR_SCHEMA, effort: 'low', maxTokens: 6000 });
 }
@@ -195,5 +197,103 @@ export async function gradeAnswer({ course, kind, question, transcript, assessme
     schema: GRADE_SCHEMA,
     effort: 'low',
     maxTokens: 4000,
+  });
+}
+
+// ---------------- Quiz 备考 ----------------
+const QSRC = E('slide', 'quiz', 'supplement');
+const QUIZ_SCHEMA = O({
+  title: S,
+  format: E('oral_presentation', 'oral_qa', 'written', 'multiple_choice', 'mixed', 'other'),
+  summary_zh: S,
+  task_zh: S,
+  sentence_count: I,
+  total_marks: S,
+  instructions_zh: A(S),
+  rules_zh: A(S),
+  topics: A(O({ id: S, name_ms: S, name_zh: S, note_zh: S })),
+  required_points: A(O({ name_ms: S, name_zh: S, compulsory: B })),
+  criteria: A(O({ name_ms: S, name_zh: S, weak_zh: S, good_zh: S, excellent_zh: S })),
+  related_pages: A(I),
+});
+
+function courseDigest(course, pages = null) {
+  return course.slides
+    .filter((s) => s.lesson && s.lesson.is_lesson_content !== false && (!pages || pages.includes(s.page)))
+    .map((s) => `第${s.page}页《${s.lesson.title_zh}》 单词：${s.lesson.vocabulary.map((v) => `${v.ms}=${v.zh}`).join('；')}；句型：${s.lesson.sentence_patterns.map((p) => `${p.pattern_ms}(${p.meaning_zh})`).join('；')}`)
+    .join('\n');
+}
+
+export async function analyzeQuiz({ course, quizText }) {
+  const system = `你是马来西亚标准马来语老师，学生母语是中文。学生上传了老师发的测验（quiz）说明文件。请准确读懂它，提取出备考需要的信息，用中文说明。
+- format：口头陈述/演讲=oral_presentation，口头问答=oral_qa，笔试写作=written，选择题=multiple_choice，混合=mixed，其他=other。
+- task_zh：一句话说明学生要做什么（如“抽到一个话题后，用 5 个简单马来语句子介绍”）。sentence_count：要求的句子/答案数量，没有要求填 0。total_marks：原文的分值写法，没有就填空字符串。
+- topics：可选/抽取的话题，id 用简短英文小写（如 myself），name_ms 用原文。没有话题就给一个代表整个测验的话题。
+- required_points：要求覆盖的要点，原文标注必选（如 *Compulsory）的 compulsory=true。
+- criteria：评分标准，每项给出 弱/良/优 三档的中文描述（原文档次不同时按含义对应）。
+- rules_zh：考试规则（如不能看笔记）。instructions_zh：其他关键说明的中文翻译。
+- related_pages：课程讲义中与测验相关的页码（根据下面的讲义摘要判断）。
+只根据文件内容提取，不要编造文件里没有的要求。`;
+  return callJSON({
+    system,
+    messages: [{ role: 'user', content: `课程：《${course.title}》\n【课程讲义摘要】\n${courseDigest(course) || '（暂无讲义）'}\n\n【测验文件原文】\n${quizText}` }],
+    schema: QUIZ_SCHEMA,
+    effort: 'medium',
+    maxTokens: 12000,
+  });
+}
+
+const STUDY_SCHEMA = O({
+  intro_zh: S,
+  points: A(O({ point_zh: S, pattern_ms: S, explanation_zh: S, examples: A(O({ ms: S, zh: S })), source: QSRC, pages: A(I) })),
+  vocabulary: A(O({ ms: S, zh: S, source: QSRC })),
+  model_answer: A(O({ ms: S, zh: S, point_zh: S })),
+  criteria_tips: A(O({ criterion_zh: S, tip_zh: S })),
+  common_mistakes: A(O({ wrong_ms: S, right_ms: S, explanation_zh: S })),
+});
+
+export async function quizStudy({ course, quiz, topic }) {
+  const a = quiz.analysis;
+  const system = `你是马来西亚标准马来语老师，帮中文母语学生针对一次测验备考。根据测验要求和课程讲义，为指定话题准备备考讲解：
+- points：每个要求的要点（required_points）一项：用什么马来语句型表达（pattern_ms，如 "Nama saya ___."）、中文讲解、2–3 个例句。句型/例句来自课程讲义的 source="slide" 并在 pages 填页码；来自测验文件本身的 source="quiz"；你补充的 source="supplement"。
+- vocabulary：这个话题常用、学生需要会说的词（优先用课件里的词）。
+- model_answer：一份符合测验要求的范文（句子数量 = 测验要求的数量，没有要求就 5 句），每句标明对应要点；用简单、地道的马来西亚标准马来语，只用课程程度的词汇和语法。intro_zh 里提醒学生把范文中的个人信息换成自己的。
+- criteria_tips：针对每个评分标准的具体建议（例如发音要注意哪些词）。
+- common_mistakes：中国学生在这个话题上的常见错误及改正。`;
+  return callJSON({
+    system,
+    messages: [{ role: 'user', content: `课程：《${course.title}》\n【测验要求】\n${JSON.stringify(a)}\n\n【课程讲义摘要】\n${courseDigest(course, a.related_pages?.length ? a.related_pages : null) || courseDigest(course) || '（暂无讲义）'}\n\n请为话题「${topic.name_ms}（${topic.name_zh}）」准备备考讲解。` }],
+    schema: STUDY_SCHEMA,
+    effort: 'medium',
+    maxTokens: 12000,
+  });
+}
+
+const MOCK_SCHEMA = O({
+  possible_asr_error: B,
+  sentences: A(O({ heard: S, corrected_ms: S, ok: B, point_zh: S, issue_zh: S })),
+  points: A(O({ name_zh: S, covered: B })),
+  criteria: A(O({ name_zh: S, level: E('weak', 'good', 'excellent', 'not_assessed'), comment_zh: S })),
+  score: I,
+  max_score: I,
+  overall_zh: S,
+  next_steps_zh: A(S),
+});
+
+export async function gradeMock({ course, quiz, topic, transcript, assessment }) {
+  const a = quiz.analysis;
+  const system = `你是严格而耐心的马来西亚标准马来语老师，正在按测验的评分标准给学生的模拟考试打分。学生的回答经过语音识别（或打字）得到，识别可能有误差，若你判断错误可能来自识别，possible_asr_error=true。
+- 把回答拆成句子写入 sentences：heard 为学生原句，corrected_ms 为改正后的句子，ok 是否基本正确，point_zh 对应要点，issue_zh 问题说明（正确则空字符串）。
+- points：逐个检查测验要求的要点是否覆盖（必选要点没说要在 overall_zh 里强调）。句子数量不符合要求也要指出。
+- criteria：按测验的每个评分标准给出 weak/good/excellent 并点评。发音、流利度只能依据提供的 Azure 发音评分判断；如果没有提供发音评分（例如学生是打字回答），这两项填 not_assessed，并说明原因。
+- score / max_score：按测验总分折算（测验分值见 total_marks；没有分值时按 10 分制）。
+- overall_zh：简短、口语化的中文总评（会被读出来）。next_steps_zh：2–4 条具体改进建议。`;
+  const pa = assessment ? `\n【Azure 发音评分】总分 ${assessment.pronScore}，准确度 ${assessment.accuracy}，流利度 ${assessment.fluency}，完整度 ${assessment.completeness}；逐词：${assessment.words.map((w) => `${w.word}(${w.accuracy}${w.errorType && w.errorType !== 'None' ? ',' + w.errorType : ''})`).join(' ')}` : '\n（没有发音评分）';
+  return callJSON({
+    system,
+    messages: [{ role: 'user', content: `课程：《${course.title}》\n【测验要求】\n${JSON.stringify(a)}\n\n抽到的话题：${topic.name_ms}（${topic.name_zh}）\n【学生的回答】\n「${transcript}」${pa}` }],
+    schema: MOCK_SCHEMA,
+    effort: 'medium',
+    maxTokens: 8000,
   });
 }
